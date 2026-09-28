@@ -1,0 +1,13 @@
+{
+  "appId": "com.trae.aiclubposter",
+  "appName": "AI百团大战海报生成器",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
