@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <!-- 内容安全策略：页面只允许本地资源与 data/file 图片，禁止外部网络请求与插件 -->
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  />
+  <title>AI百团大战海报生成器</title>
+  <style>
+    :root {
+      --bg: #0e111b;
+      --panel: #151a28;
+      --card: #1a2031;
+      --line: #2a3247;
+      --text: #e8ecf6;
+      --text-dim: #97a0b8;
+      --primary: #6e7bff;
+      --primary-deep: #5a66f0;
+      --ok: #3ddc97;
+      --warn: #ff7a70;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+
+    /* 预览用内置思源黑体（合成由后端 resvg 加载同名字体） */
+    @font-face {
+      font-family: "SourceHanSansSC";
+      src: url("fonts/SourceHanSansSC-Regular.otf") format("opentype");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---------------- 顶部全局导航 ---------------- */
+    #appNav {
+      display: flex; align-items: center;
+      height: 46px;
+      padding: 0 16px;
+      background: #0d101b;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    #appNav .nav-title {
+      font-weight: 700; letter-spacing: 1px; margin-right: 22px;
+      color: #e9ecff;
+    }
+    #appNav .nav-btn {
+      padding: 6px 16px; margin-right: 8px;
+      border-radius: 7px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      cursor: pointer; font-size: 13px;
+    }
+    #appNav .nav-btn:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    #appNav .nav-btn.active {
+      color: #fff;
+      background: rgba(110, 123, 255, .22);
+      border-color: rgba(110, 123, 255, .5);
+    }
+
+    #viewMaker { display: flex; flex: 1; min-height: 0; }
+    #viewHistory { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+
+    /* ---------------- 我的海报 ---------------- */
+    #historyToolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    #historyToolbar .spacer { flex: 1; }
+    #historyStatus { font-size: 12px; color: var(--text-dim); }
+    #historyScroll { flex: 1; overflow-y: auto; padding: 22px; }
+    #historyGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 18px;
+    }
+    .poster-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      transition: border-color .15s, transform .15s;
+    }
+    .poster-card:hover { border-color: rgba(110,123,255,.55); transform: translateY(-2px); }
+    .poster-card .thumb {
+      width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+      display: block; cursor: pointer; background: #0c101c;
+    }
+    .poster-card .meta { padding: 10px 12px; }
+    .poster-card .meta .name { font-weight: 700; font-size: 13px; color: var(--text); }
+    .poster-card .meta .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    .poster-card .card-actions {
+      display: flex; gap: 6px; padding: 0 10px 10px; flex-wrap: wrap;
+    }
+    .poster-card .card-actions .btn { padding: 4px 9px; font-size: 11px; }
+    #historyEmpty {
+      text-align: center; color: var(--text-dim); padding: 90px 20px; font-size: 14px;
+    }
+
+    /* ---------------- 历史详情弹窗 ---------------- */
+    #historyModal {
+      position: fixed; inset: 0;
+      background: rgba(6, 8, 16, .78);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    #historyModal .dialog {
+      display: flex; max-width: 1040px; width: 92%; max-height: 88vh;
+      background: var(--panel);
+      border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    }
+    #modalImg {
+      max-width: 56%; max-height: 82vh;
+      background: #0c101c; object-fit: contain; display: block;
+    }
+    #modalSide { flex: 1; padding: 22px; display: flex; flex-direction: column; gap: 12px; min-width: 260px; }
+    #modalSide h3 { margin: 0; font-size: 18px; }
+    #modalCopyBox {
+      flex: 1; overflow-y: auto;
+      background: #121727; border: 1px solid var(--line); border-radius: 8px;
+      padding: 12px; font-size: 13px; color: var(--text); white-space: pre-wrap;
+    }
+    #modalSide .actions { gap: 8px; }
+    #modalClose { position: absolute; top: 18px; right: 24px; }
+    #historyModal .loading { color: var(--text-dim); padding: 40px; }
+
+    /* ---------------- 第二行版式工具 ---------------- */
+    #layoutBar2 {
+      display: none;
+      align-items: center; gap: 18px;
+      padding: 8px 20px;
+      border-bottom: 1px solid var(--line);
+      background: #141a29;
+      font-size: 12px; flex-wrap: wrap;
+    }
+    #layoutBar2 .group { display: flex; align-items: center; gap: 6px; color: var(--text-dim); flex-wrap: wrap; }
+    .btn.preset { padding: 4px 11px; font-size: 12px; }
+    .btn.danger {
+      border-color: rgba(255, 107, 107, .5);
+      color: #ff9a9a;
+      background: rgba(255, 90, 90, .1);
+    }
+    .btn.danger:hover { background: rgba(255, 90, 90, .22); color: #ffb3b3; }
+
+    /* ---------------- 拖拽对齐参考线 ---------------- */
+    #guidesLayer { position: absolute; inset: 0; pointer-events: none; }
+    .guide-v, .guide-h {
+      position: absolute;
+      background: #41e0ff;
+      box-shadow: 0 0 6px #41e0ff;
+    }
+    .guide-v { width: 1px; top: 0; bottom: 0; }
+    .guide-h { height: 1px; left: 0; right: 0; }
+
+    /* ---------------- 通用小弹窗（确认/引导/改文字） ---------------- */
+    #confirmModal, #onboardingModal, #textEditModal {
+      position: fixed; inset: 0;
+      background: rgba(6, 8, 16, .72);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 110;
+    }
+    /* 改文字弹窗的多行输入框 */
+    #textEditInput {
+      width: 100%; box-sizing: border-box;
+      min-height: 96px; resize: vertical;
+      background: #0f1424; color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; font-size: 14px; line-height: 1.5;
+      font-family: inherit;
+    }
+    #textEditInput:focus { outline: none; border-color: var(--primary); }
+    #textEditError { color: #ff7676; font-size: 12px; margin-top: 7px; min-height: 14px; }
+    .small-dialog {
+      width: 460px; max-width: 92%;
+      background: var(--panel);
+      border: 1px solid var(--line); border-radius: 12px;
+      padding: 24px 26px;
+    }
+    .small-dialog h3 { margin: 0 0 14px; font-size: 17px; }
+    .small-dialog .info-line {
+      display: flex; justify-content: space-between; gap: 14px;
+      padding: 8px 0; border-bottom: 1px dashed var(--line);
+      font-size: 13px;
+    }
+    .small-dialog .info-line .k { color: var(--text-dim); flex-shrink: 0; }
+    .small-dialog .note {
+      margin-top: 12px; font-size: 12px; color: var(--text-dim);
+      background: #121727; border-radius: 8px; padding: 9px 12px;
+    }
+
+    /* ---------------- 首次启动引导 ---------------- */
+    .small-dialog.onboard { width: 520px; }
+    #onboardDots { display: flex; gap: 7px; margin-bottom: 18px; }
+    #onboardDots .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,255,255,.18);
+    }
+    #onboardDots .dot.active { background: var(--primary); width: 22px; border-radius: 5px; }
+    #onboardContent .step-title { font-size: 17px; font-weight: 700; margin-bottom: 10px; }
+    #onboardContent .step-body { font-size: 13px; color: var(--text-dim); line-height: 1.9; }
+    #onboardContent .step-body b { color: var(--text); }
+    #onboardContent kbd {
+      background: #121727; border: 1px solid var(--line); border-radius: 4px;
+      padding: 1px 7px; font-size: 11px; color: #c9d2ff;
+    }
+
+    /* ---------------- 左侧控制区 ---------------- */
+    #sidebar {
+      width: 400px;
+      min-width: 340px;
+      height: 100%;
+      overflow-y: auto;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px 18px 28px;
+    }
+    #sidebar::-webkit-scrollbar { width: 8px; }
+    #sidebar::-webkit-scrollbar-thumb { background: #2c344b; border-radius: 4px; }
+
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+    .brand .logo {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, #8b93ff, #5a66f0);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800; color: #fff;
+    }
+    .brand h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
+    .brand .sub { color: var(--text-dim); font-size: 11px; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px 15px;
+      margin-bottom: 14px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #aab4ff;
+      letter-spacing: .8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card h2::before {
+      content: ""; width: 4px; height: 13px; border-radius: 2px;
+      background: linear-gradient(180deg, #8b93ff, #5a66f0);
+    }
+
+    label { display: block; margin-bottom: 10px; }
+    label > span {
+      display: flex; align-items: center; justify-content: space-between;
+      color: var(--text-dim); font-size: 11.5px; margin-bottom: 4px;
+    }
+    input[type="text"], input[type="password"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #121727;
+      color: var(--text);
+      font-family: inherit; font-size: 12.5px;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(110, 123, 255, .18);
+    }
+    textarea { resize: vertical; min-height: 72px; }
+    .row { display: flex; gap: 10px; }
+    .row > label { flex: 1; min-width: 0; }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 7px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #202740; color: var(--text);
+      font-family: inherit; font-size: 12.5px;
+      cursor: pointer; white-space: nowrap;
+      transition: all .15s;
+    }
+    .btn:hover { border-color: var(--primary); color: #c4cbff; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn.primary {
+      background: linear-gradient(135deg, #7d88ff, var(--primary-deep));
+      border-color: transparent; color: #fff; font-weight: 700;
+      box-shadow: 0 4px 14px rgba(110, 123, 255, .35);
+    }
+    .btn.primary:hover { color: #fff; filter: brightness(1.06); }
+    .btn.block { width: 100%; }
+    .btn.template {
+      border-color: rgba(110, 123, 255, .45);
+      background: rgba(110, 123, 255, .1);
+      color: #aab4ff;
+    }
+    .btn.template:hover { background: rgba(110, 123, 255, .22); color: #c4cbff; border-color: var(--primary); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .pill {
+      padding: 1px 8px; border-radius: 999px;
+      font-size: 10.5px; font-weight: 400;
+      background: #2a3252; color: var(--text-dim);
+    }
+    .pill.ok { background: rgba(61, 220, 151, .15); color: var(--ok); }
+    .pill.warn { background: rgba(255, 122, 112, .15); color: var(--warn); }
+
+    .status { font-size: 11.5px; min-height: 18px; margin-top: 8px; color: var(--text-dim); }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--warn); }
+    .hint { color: var(--text-dim); font-size: 11px; margin-top: 8px; }
+
+    /* 参考图缩略图 */
+    #refPreview {
+      margin-top: 8px; display: none;
+      width: 96px; height: 96px; border-radius: 10px;
+      border: 1px solid var(--line); object-fit: cover;
+      background: #121727;
+    }
+
+    /* ---------------- 右侧预览区 ---------------- */
+    #workspace {
+      flex: 1; height: 100%; display: flex; flex-direction: column; min-width: 0;
+    }
+    #toolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    #toolbar .spacer { flex: 1; }
+    #genStatusBar {
+      font-size: 12px; color: var(--text-dim);
+      max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #genStatusBar.ok { color: var(--ok); }
+    #genStatusBar.err { color: var(--warn); }
+
+    #previewWrap {
+      flex: 1; overflow: auto; padding: 22px;
+      display: flex; align-items: center; justify-content: center;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(110,123,255,.08), transparent 60%),
+        var(--bg);
+    }
+    #previewPlaceholder {
+      color: var(--text-dim); font-size: 13px; text-align: center;
+    }
+    #previewPlaceholder .big { font-size: 40px; display: block; margin-bottom: 10px; opacity: .5; }
+    #posterImage {
+      max-width: 100%; max-height: 100%;
+      border-radius: 10px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+      display: none;
+    }
+
+    #thumbStrip {
+      display: none; gap: 10px;
+      padding: 0 20px 16px;
+      overflow-x: auto;
+    }
+    #thumbStrip img {
+      height: 74px; border-radius: 8px;
+      border: 2px solid transparent; cursor: pointer;
+      transition: border-color .15s;
+    }
+    #thumbStrip img.active { border-color: var(--primary); }
+
+    #filePathBar {
+      padding: 10px 20px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+      font-size: 11px; color: var(--text-dim);
+      word-break: break-all;
+      display: none;
+    }
+
+    /* ---------------- 布局编辑工具栏 ---------------- */
+    #layoutBar {
+      display: none;
+      align-items: center; gap: 14px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--line);
+      background: #171d2e;
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    #layoutBar .group { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+    #layoutBar select { width: auto; padding: 5px 8px; font-size: 12px; }
+    #layoutBar input[type="color"] {
+      width: 34px; height: 28px; padding: 2px;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: #121727; cursor: pointer;
+    }
+
+    /* ---------------- 布局编辑器 ---------------- */
+    #editorStage {
+      position: relative;
+      display: none;
+      line-height: 0;
+      user-select: none;
+    }
+    #editorImg {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 220px);
+      border-radius: 8px;
+      box-shadow: 0 14px 44px rgba(0, 0, 0, .5);
+    }
+    #blocksLayer {
+      position: absolute;
+      inset: 0;
+    }
+    .text-block {
+      position: absolute;
+      white-space: nowrap;
+      cursor: move;
+      border-radius: 8px;
+      /* 纵向 .12em：盒高 = .24em + 行数×1.15em，与后端多行盒高公式对齐 */
+      padding: .12em .42em;
+      box-sizing: content-box;
+      touch-action: none;
+    }
+    /* 文字块中的一行：不换行，行高 1.15（多行额外行高与后端一致） */
+    .text-block .text-line {
+      white-space: nowrap;
+      line-height: 1.15;
+    }
+    .text-block.selected { outline: 2px dashed var(--primary); outline-offset: 2px; }
+    /* 换行复选框与工具条对齐 */
+    #blockWrap { width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary); }
+    #blockWrapWidth { width: 74px; padding: 5px 7px; font-size: 12px; }
+
+    .spin {
+      display: inline-block;
+      width: 13px; height: 13px;
+      border: 2px solid rgba(255,255,255,.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      vertical-align: -2px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- ============== 顶部全局导航 ============== -->
+  <nav id="appNav">
+    <span class="nav-title">AI百团大战海报生成器</span>
+    <button class="nav-btn active" id="navMaker">海报制作</button>
+    <button class="nav-btn" id="navHistory">我的海报</button>
+  </nav>
+
+  <!-- ============== 视图一：海报制作 ============== -->
+  <div id="viewMaker">
+
+  <!-- ============== 左侧：控制区 ============== -->
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="logo">团</div>
+      <div>
+        <h1>AI百团大战海报生成器</h1>
+        <div class="sub">多厂商文生图 · 社团招新海报一键生成</div>
+      </div>
+    </div>
+
+    <!-- ① API 配置 -->
+    <section class="card">
+      <h2>API 配置</h2>
+      <label>
+        <span>预设厂商</span>
+        <select id="vendor"></select>
+      </label>
+      <label>
+        <span>Base URL <i id="keyState" class="pill">未填写 Key</i></span>
+        <input id="baseUrl" type="text" placeholder="选择厂商后自动填写，或手动输入" />
+      </label>
+      <label>
+        <span>API Key（本地加密保存，不会上传）</span>
+        <input id="apiKey" type="password" placeholder="留空表示不修改已保存的 Key" />
+      </label>
+      <div class="actions">
+        <button class="btn" id="fetchModels">拉取模型列表</button>
+        <button class="btn" id="saveConfigBtn">保存配置</button>
+      </div>
+      <div class="status" id="modelStatus"></div>
+    </section>
+
+    <!-- ② 图像生成设置 -->
+    <section class="card">
+      <h2>图像生成设置</h2>
+      <label>
+        <span>绘图模型（拉取后选择）</span>
+        <select id="model"><option value="">（请先拉取模型列表）</option></select>
+      </label>
+      <label>
+        <span>手动输入模型名（拉取不到时使用，优先级高于选择）</span>
+        <input id="modelManual" type="text" placeholder="例如 nano-banana / cogview-3-plus" />
+      </label>
+      <label>
+        <span>文本辅助模型（对话模型，用于提示词辅助，如 glm-4-flash / qwen-plus / gpt-4o-mini，可随时切换不同模型）</span>
+        <select id="assistantModel"><option value="">（拉取模型列表后选择，或在下方手动输入）</option></select>
+      </label>
+      <label>
+        <span>手动输入文本辅助模型名（优先级高于选择）</span>
+        <input id="assistantModelManual" type="text" placeholder="例如 glm-4-flash" />
+      </label>
+      <div class="row">
+        <label>
+          <span>图片尺寸</span>
+          <select id="size">
+            <option value="1024x1024">1024×1024（方图）</option>
+            <option value="832x1216">832×1216（竖版海报）</option>
+            <option value="1216x832">1216×832（横版）</option>
+            <option value="1024x1536">1024×1536（竖版长图）</option>
+            <option value="1536x1024">1536×1024（横版长图）</option>
+            <option value="768x1024">768×1024（竖版·小）</option>
+            <option value="512x512">512×512（小方图）</option>
+          </select>
+        </label>
+        <label>
+          <span>生成张数</span>
+          <input id="count" type="number" min="1" max="4" step="1" value="1" />
+        </label>
+      </div>
+    </section>
+
+    <!-- ③ 海报文案 -->
+    <section class="card">
+      <h2>海报文案</h2>
+      <label>
+        <span>社团名称 *</span>
+        <input id="clubName" type="text" placeholder="例如：星河动漫社" />
+      </label>
+      <label>
+        <span>招新口号</span>
+        <input id="slogan" type="text" placeholder="例如：以青春之名，赴梦想之约" />
+      </label>
+      <div class="row">
+        <label>
+          <span>活动时间</span>
+          <input id="activityTime" type="text" placeholder="例如：9月15日 14:00" />
+        </label>
+        <label>
+          <span>活动地点</span>
+          <input id="activityLocation" type="text" placeholder="例如：大学生活动中心" />
+        </label>
+      </div>
+      <label>
+        <span>海报风格</span>
+        <select id="style">
+          <option>赛博朋克科技感</option>
+          <option>极简扁平风</option>
+          <option>二次元动漫风</option>
+          <option>国风水墨</option>
+          <option selected>扁平插画</option>
+        </select>
+      </label>
+    </section>
+
+    <!-- ③-2 智能文案：几乎不用打字 -->
+    <section class="card">
+      <h2>智能文案（AI 代笔）</h2>
+      <label>
+        <span>把想到的内容随手写在这里（一句话也行），点下方按钮自动处理</span>
+        <textarea id="smartInput" rows="3"
+          placeholder="例如：动漫社&#10;或：9月20日 18:00 东区操场&#10;或：电竞社，下周六晚，体育馆"></textarea>
+      </label>
+      <div class="actions">
+        <button class="btn" id="smartSlogan">生成招新口号</button>
+        <button class="btn" id="smartParse">拆分时间/地点</button>
+        <button class="btn primary" id="smartFullfill">一键填充全部</button>
+      </div>
+      <div class="status" id="smartStatus"></div>
+    </section>
+
+    <!-- ④ 高级功能设置 -->
+    <section class="card">
+      <h2>高级功能 · IP 角色设定</h2>
+      <label>
+        <span>角色描述模板（定义吉祥物 / 看板娘外貌，生成时自动与海报提示词拼接）</span>
+        <textarea id="characterPrompt" rows="4"
+          placeholder="例如：1girl, anime style, pink twintails, bright smile, white sailor uniform, masterpiece"></textarea>
+      </label>
+      <label>
+        <span>负面提示词（可选）</span>
+        <input id="extraNegative" type="text" placeholder="例如：lowres, bad hands, extra fingers" />
+      </label>
+      <label>
+        <span>角色参考图（选择后复制到本地，生成时走对话通道发送，保证形象一致）</span>
+        <input id="referenceImage" type="text" readonly placeholder="尚未选择参考图" />
+        <img id="refPreview" alt="参考图预览" />
+      </label>
+      <div class="actions">
+        <button class="btn" id="pickRef">选择图片</button>
+        <button class="btn" id="clearRef">清除参考图</button>
+      </div>
+    </section>
+
+    <!-- ⑤ AI 提示词辅助 -->
+    <section class="card">
+      <h2>AI 提示词辅助</h2>
+      <label>
+        <span>预设场景模板（点击一键生成对应精美英文提示词）</span>
+        <div class="actions" id="sceneTemplateBar"></div>
+      </label>
+      <label>
+        <span>辅助输入（填写角色想法 / 画面补充；「优化画面」可留空，将自动使用社团名与风格）</span>
+        <textarea id="assistInput" rows="3"
+          placeholder="例如：粉色头发的动漫少女，穿校服，笑容开朗"></textarea>
+      </label>
+      <div class="actions">
+        <button class="btn" id="assistCharacter">扩写成角色 tag</button>
+        <button class="btn" id="assistScene">优化海报画面</button>
+        <button class="btn" id="assistTranslate">中英互译</button>
+      </div>
+      <label style="margin-top:10px;">
+        <span>辅助结果</span>
+        <textarea id="assistOutput" rows="4" readonly placeholder="点击上方按钮，AI 生成的结果将显示在这里"></textarea>
+      </label>
+      <div class="actions">
+        <button class="btn" id="applyCharacter">填入角色描述模板</button>
+        <button class="btn" id="undoCharacter" disabled>撤销填入</button>
+        <button class="btn" id="copyAssist">复制结果</button>
+      </div>
+      <div class="status" id="assistStatus"></div>
+    </section>
+  </aside>
+
+  <!-- ============== 右侧：预览与操作区 ============== -->
+  <main id="workspace">
+    <div id="toolbar">
+      <button class="btn primary" id="generateBtn">生成海报</button>
+      <button class="btn danger" id="cancelBtn" style="display:none;">取消生成</button>
+      <button class="btn" id="editTextBtn" disabled>修改文字</button>
+      <button class="btn" id="saveBtn" disabled>保存图片</button>
+      <button class="btn" id="copyBtn" disabled>复制到剪贴板</button>
+      <button class="btn" id="openDirBtn">打开输出文件夹</button>
+      <div class="spacer"></div>
+      <div id="genStatusBar">就绪：填写左侧信息后点击「生成海报」</div>
+    </div>
+
+    <!-- 布局编辑工具栏（生成原图后出现） -->
+    <div id="layoutBar">
+      <span>布局编辑：拖动文字块调整位置，<b style="color:var(--primary)">双击文字块可修改文字</b></span>
+      <span class="group">
+        字体
+        <select id="blockFont">
+          <option value="sourcehan">思源黑体（内置）</option>
+          <option value="yahei">微软雅黑</option>
+          <option value="hei">黑体</option>
+          <option value="song">宋体</option>
+        </select>
+      </span>
+      <span class="group">
+        颜色 <input type="color" id="blockColor" value="#ffffff" />
+      </span>
+      <span class="group">
+        字号
+        <button class="btn preset" id="fontSizeDown" title="缩小字号（当前选中块）">A−</button>
+        <input type="number" id="blockFontSize" min="10" step="2" title="字号（背景像素），先选中文字块" style="width:72px" />
+        <button class="btn preset" id="fontSizeUp" title="放大字号（当前选中块）">A+</button>
+      </span>
+      <span class="group">
+        自动换行
+        <input type="checkbox" id="blockWrap" title="先点选一个文字块，再勾选；超出宽度的文字会自动折到下一行" />
+        <input type="number" id="blockWrapWidth" min="20" step="10" title="每行最大宽度（背景像素）" /> px
+      </span>
+      <button class="btn" id="addTextBlock">＋ 添加文字</button>
+      <button class="btn" id="resetLayout">恢复默认布局</button>
+      <button class="btn primary" id="applyLayout">应用布局并合成</button>
+    </div>
+
+    <!-- 版式预设 + 对齐（第二行） -->
+    <div id="layoutBar2">
+      <span class="group">
+        内置版式
+        <button class="btn preset" data-layout="bottombar">底部信息条</button>
+        <button class="btn preset" data-layout="left">左对齐</button>
+        <button class="btn preset" data-layout="center">居中大标题</button>
+        <button class="btn preset" data-layout="diagonal">对角排版</button>
+      </span>
+      <span class="group">
+        快捷对齐
+        <button class="btn preset" id="alignHCenter">水平居中</button>
+        <button class="btn preset" id="alignBottom">底部对齐</button>
+      </span>
+      <span class="group">
+        历史记录
+        <button class="btn preset" id="undoBtn" title="撤销（快捷键 Ctrl+Z）">↶ 撤销</button>
+        <button class="btn preset" id="redoBtn" title="重做（快捷键 Ctrl+Y）">↷ 重做</button>
+      </span>
+    </div>
+
+    <div id="previewWrap">
+      <div id="previewPlaceholder">
+        <span class="big">▦</span>
+        生成的最终海报（AI 背景图 + 排版文字）将显示在这里
+      </div>
+
+      <!-- 布局编辑阶段 -->
+      <div id="editorStage">
+        <img id="editorImg" alt="背景原图" />
+        <div id="blocksLayer"></div>
+        <div id="guidesLayer"></div>
+      </div>
+
+      <!-- 最终成品阶段 -->
+      <img id="posterImage" alt="海报预览" />
+    </div>
+
+    <div id="thumbStrip"></div>
+    <div id="filePathBar"></div>
+  </main>
+
+  </div><!-- /viewMaker -->
+
+  <!-- ============== 视图二：我的海报 ============== -->
+  <div id="viewHistory" style="display:none;">
+    <div id="historyToolbar">
+      <button class="btn" id="historyRefresh">刷新列表</button>
+      <button class="btn" id="historyClear">清空记录</button>
+      <div class="spacer"></div>
+      <div id="historyStatus"></div>
+    </div>
+    <div id="historyScroll">
+      <div id="historyGrid"></div>
+      <div id="historyEmpty" style="display:none;">
+        还没有保存过海报。<br />
+        去「海报制作」生成第一张海报后，这里会自动记录缩略图与文案，方便随时找回。
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 历史详情弹窗 ============== -->
+  <div id="historyModal">
+    <button class="btn" id="modalClose">关闭</button>
+    <div class="dialog">
+      <img id="modalImg" alt="海报大图" />
+      <div id="modalSide">
+        <h3 id="modalTitle">海报详情</h3>
+        <div id="modalCopyBox"></div>
+        <div class="actions">
+          <button class="btn" id="modalCopyText">复制文案</button>
+          <button class="btn" id="modalSaveAs">另存为</button>
+          <button class="btn" id="modalReveal">在文件夹中显示</button>
+          <button class="btn" id="modalDelete">删除记录</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 生成前确认弹窗 ============== -->
+  <div id="confirmModal">
+    <div class="small-dialog">
+      <h3>确认生成信息</h3>
+      <div id="confirmBody"></div>
+      <div class="actions" style="margin-top:16px; justify-content:flex-end;">
+        <button class="btn" id="confirmCancel">再想想</button>
+        <button class="btn primary" id="confirmOk">开始生成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 修改文字弹窗（双击文字块打开） ============== -->
+  <div id="textEditModal">
+    <div class="small-dialog">
+      <h3>修改海报文字</h3>
+      <textarea id="textEditInput" spellcheck="false" placeholder="输入新的文字内容，支持回车换行"></textarea>
+      <div id="textEditError"></div>
+      <div class="actions" style="margin-top:14px; justify-content:space-between;">
+        <button class="btn danger" id="textEditDelete">删除该文字块</button>
+        <div>
+          <button class="btn" id="textEditCancel">取消</button>
+          <button class="btn primary" id="textEditSave">保存修改</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 首次启动引导 ============== -->
+  <div id="onboardingModal">
+    <div class="small-dialog onboard">
+      <div id="onboardDots"></div>
+      <div id="onboardContent"></div>
+      <div class="actions" style="margin-top:18px; justify-content:space-between;">
+        <button class="btn" id="onboardSkip">跳过引导</button>
+        <div>
+          <button class="btn" id="onboardPrev">上一步</button>
+          <button class="btn primary" id="onboardNext">下一步</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
